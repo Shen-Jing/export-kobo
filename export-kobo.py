@@ -34,8 +34,15 @@ import datetime
 import csv
 import io
 import os
+import random
 import sqlite3
 import sys
+import smtplib
+import requests
+from dotenv import load_dotenv
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from notion_client import Client
 
 __author__ = "Alberto Pettarin"
 __email__ = "alberto@albertopettarin.it"
@@ -303,6 +310,11 @@ class ExportKobo(CommandLineTool):
             "help": "List the titles of books with annotations or highlights"
         },
         {
+            "name": "--export",
+            "action": "store_true",
+            "help": "Export to Notion"
+        },
+        {
             "name": "--book",
             "nargs": "?",
             "type": str,
@@ -368,7 +380,12 @@ class ExportKobo(CommandLineTool):
 
     def __init__(self):
         super(ExportKobo, self).__init__()
+        self.books = []
         self.items = []
+        self.notion_token = os.getenv('NOTION_TOKEN')
+        self.notion = Client(auth = self.notion_token)
+        self.database_id = os.getenv('NOTION_DATABASE_ID')
+
 
     def actual_command(self):
         """
@@ -392,6 +409,8 @@ class ExportKobo(CommandLineTool):
         else:
             # export annotations and/or highlights
             items = self.read_items()
+            # Exclude items which is bookmark (i.e. highlights and annotations)
+            items = [item for item in items if isinstance(item.text, str) and item.text.strip()]
             if self.vargs["kindle"]:
                 # kindle format
                 acc = u"\n".join([i.kindle_my_clippings() for i in items])
@@ -401,8 +420,25 @@ class ExportKobo(CommandLineTool):
             elif self.vargs["raw"]:
                 acc = u"\n".join([(u"%s\n" % i.text) for i in items])
             else:
+                number_to_select = 5
+                selected_items = random.sample(items, number_to_select)
                 # human-readable format
-                acc = u"\n".join([(u"%s\n" % i) for i in items])
+                acc = u"\n".join([(u"%s\n" % i) for i in selected_items])
+                # 使用示例
+                sender_email = os.getenv('SENDER_EMAIL')
+                app_password = os.getenv('APP_PASSWORD')
+                receiver_email = os.getenv('RECEIVER_EMAIL')
+                subject = '每日 Kobo 劃記摘要'
+                self.send_email(sender_email, app_password, receiver_email, subject, acc)
+
+        if self.vargs["export"]:
+            print("Available books:")
+            for i, book in enumerate(self.books):
+                print(f"{i}. {book.title}")
+            choice = int(input("Please input the number: "))
+            page_id = self.search_notion_page(self.books[choice].title)
+            selected_items = [item for item in items if self.books[choice].title in item.title]
+            self.export_to_notion(page_id, selected_items)
 
         if self.vargs["output"] is not None:
             # write to file
@@ -424,6 +460,24 @@ class ExportKobo(CommandLineTool):
             self.print_stdout(u"Books with annotations or highlights: %d" % len(books))
             if not self.vargs["list"]:
                 self.print_stdout(u"Annotations and/or highlights:        %d" % len(items))
+    
+    def search_notion_page(self, book_title):
+        response = self.notion.databases.query(
+            database_id = self.database_id,
+            filter = {
+                "property": "title",
+                "title": {
+                    "equals": book_title
+                    #"equals": book_title
+                }
+            }
+        )
+        results = response.get("results")
+
+        if not results:
+            print(u"The page (%s) is not found." % book_title)
+            return None
+        return results[0].get("id")
 
     def list_to_csv(self, data):
         """
@@ -453,8 +507,8 @@ class ExportKobo(CommandLineTool):
         Return a list of pairs ``(int, Book)``,
         with the index starting at one.
         """
-        books = [Book(d) for d in self.query(self.QUERY_BOOKS)]
-        return list(enumerate(books, start=1))
+        self.books = [Book(d) for d in self.query(self.QUERY_BOOKS)]
+        return list(enumerate(self.books, start=1))
 
     def volumeid_from_bookid(self):
         """
@@ -495,7 +549,7 @@ class ExportKobo(CommandLineTool):
         """
         db_path = self.vargs["db"]
         if not os.path.exists(db_path):
-            self.error(u"Unable to read the KoboReader.sqlite file. Please check that the path is correct and that you have read permission on it.")
+            self.error(u"Unable to read the KoboReader.sqlite file. Please check that the path is correct and that you have read permission on it. \nDatabase path: %s" % db_path)
         try:
             sql_connection = sqlite3.connect(db_path)
             sql_cursor = sql_connection.cursor()
@@ -508,6 +562,72 @@ class ExportKobo(CommandLineTool):
         # NOTE the values are Unicode strings (unicode on PY2, str on PY3)
         #      hence data is a list of tuples of Unicode strings
         return data
+    
+    def ensure_highlights_header(self, page_id):
+        children = self.notion.blocks.children.list(block_id=page_id).get("results", [])
+        
+        for child in children:
+            if child["type"] == "heading_3" and child["heading_3"]["rich_text"][0]["text"]["content"] == "Highlights":
+                return child["id"]
+        
+        new_header = self.notion.blocks.children.append(
+            block_id=page_id,
+            children=[
+                {
+                    "object": "block",
+                    "type": "heading_3",
+                    "heading_3": {
+                        "rich_text": [{"type": "text", "text": {"content": "Highlights"}}],
+                        "is_toggleable": True
+                    }
+                }
+            ]
+        )
+        return new_header["results"][0]["id"]
+
+    def export_to_notion(self, page_id, highlights):
+        highlights_header_id = self.ensure_highlights_header(page_id)
+
+        # The limit is 100.
+        # Otherwise: body failed validation: body.children.length should be ≤ `100`, instead was `142`.
+        batch_size = 100
+        batches = [valid_highlights[i:i + batch_size] for i in range(0, len(valid_highlights), batch_size)]
+        
+        total_added = 0
+        for batch in batches:
+            bullet_list = [
+                {
+                    "object": "block",
+                    "type": "bulleted_list_item",
+                    "bulleted_list_item": {
+                        "rich_text": [{"type": "text", "text": {"content": highlight.text}}]
+                    }
+                }
+                for highlight in batch
+            ]
+            
+            self.notion.blocks.children.append(
+                block_id=highlights_header_id,
+                children=bullet_list
+            )
+            
+            total_added += len(batch)
+        
+        print(f"成功添加 {len(highlights)} 條劃記到 Notion {highlights[0].title} 頁面")
+
+    def send_email(self, sender_email, sender_password, receiver_email, subject, body):
+        message = MIMEMultipart()
+        message['From'] = sender_email
+        message['To'] = receiver_email
+        message['Subject'] = subject
+        
+        message.attach(MIMEText(body, 'plain'))
+        
+        with smtplib.SMTP('smtp.gmail.com', 587) as server:
+            server.starttls()
+            server.login(sender_email, sender_password)
+            server.send_message(message)
+
 
 
 def main():
