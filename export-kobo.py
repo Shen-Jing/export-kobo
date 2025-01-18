@@ -43,6 +43,11 @@ from dotenv import load_dotenv
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from notion_client import Client
+from pathlib import Path
+
+script_dir = Path(__file__).resolve().parent
+dotenv_path = script_dir / '.env'
+load_dotenv(dotenv_path)
 
 __author__ = "Alberto Pettarin"
 __email__ = "alberto@albertopettarin.it"
