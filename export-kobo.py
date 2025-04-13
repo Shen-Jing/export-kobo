@@ -596,7 +596,7 @@ class ExportKobo(CommandLineTool):
         # The limit is 100.
         # Otherwise: body failed validation: body.children.length should be ≤ `100`, instead was `142`.
         batch_size = 100
-        batches = [valid_highlights[i:i + batch_size] for i in range(0, len(valid_highlights), batch_size)]
+        batches = [highlights[i:i + batch_size] for i in range(0, len(highlights), batch_size)]
         
         total_added = 0
         for batch in batches:
