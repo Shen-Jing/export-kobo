@@ -180,12 +180,12 @@ class Item(object):
         self.volumeid = values[0]
         self.text = values[1]
         self.annotation = values[2]
-        self.extraannotationdata = values[3]
-        self.datecreated = values[4] if values[4] is not None else u"1970-01-01T00:00:00.000"
-        self.datemodified = values[5] if values[5] is not None else u"1970-01-01T00:00:00.000"
-        self.booktitle = values[6]
-        self.title = values[7]
-        self.author = values[8]
+        #self.extraannotationdata = values[3]
+        self.datecreated = values[3] if values[3] is not None else u"1970-01-01T00:00:00.000"
+        self.datemodified = values[4] if values[4] is not None else u"1970-01-01T00:00:00.000"
+        self.booktitle = values[5]
+        self.title = values[6]
+        self.author = values[7]
         self.kind = self.BOOKMARK
         if (self.text is not None) and (self.text != "") and (self.annotation is not None) and (self.annotation != ""):
             self.kind = self.ANNOTATION
@@ -267,6 +267,7 @@ class Book(object):
         self.booktitle = values[1]
         self.title = values[2]
         self.author = values[3]
+        self.isbn = values[4]
 
     def __repr__(self):
         return u"(%s, %s, %s, %s)" % (self.volumeid, self.booktitle, self.title, self.author)
@@ -353,6 +354,11 @@ class ExportKobo(CommandLineTool):
           "action": "store_true",
           "help": "Output in raw text instead of human-readable format"
         },
+        {
+          "name": "--email",
+          "action": "store_true",
+          "help": "Exort random highlights to email",
+        },
     ]
 
     # NOTE: not a tuple, just a continuation string!
@@ -361,7 +367,6 @@ class ExportKobo(CommandLineTool):
         "Bookmark.VolumeID, "
         "Bookmark.Text, "
         "Bookmark.Annotation, "
-        "Bookmark.ExtraAnnotationData, "
         "Bookmark.DateCreated, "
         "Bookmark.DateModified, "
         "content.BookTitle, "
@@ -377,7 +382,8 @@ class ExportKobo(CommandLineTool):
         "Bookmark.VolumeID, "
         "content.BookTitle, "
         "content.Title, "
-        "content.Attribution "
+        "content.Attribution, "
+        "content.ISBN "
         "FROM Bookmark INNER JOIN content "
         "ON Bookmark.VolumeID = content.ContentID "
         "ORDER BY content.Title;"
@@ -424,7 +430,7 @@ class ExportKobo(CommandLineTool):
                 acc = self.list_to_csv([i.csv_tuple() for i in items])
             elif self.vargs["raw"]:
                 acc = u"\n".join([(u"%s\n" % i.text) for i in items])
-            else:
+            elif self.vargs["email"]:
                 number_to_select = 5
                 selected_items = random.sample(items, number_to_select)
                 # human-readable format
@@ -439,9 +445,9 @@ class ExportKobo(CommandLineTool):
         if self.vargs["export"]:
             print("Available books:")
             for i, book in enumerate(self.books):
-                print(f"{i}. {book.title}")
+                print(f"{i}. {book.title} - ISBN: {book.isbn}")
             choice = int(input("Please input the number: "))
-            page_id = self.search_notion_page(self.books[choice].title)
+            page_id = self.search_notion_page(self.books[choice].title, self.books[choice].isbn)
             selected_items = [item for item in items if self.books[choice].title in item.title]
             self.export_to_notion(page_id, selected_items)
 
@@ -466,14 +472,13 @@ class ExportKobo(CommandLineTool):
             if not self.vargs["list"]:
                 self.print_stdout(u"Annotations and/or highlights:        %d" % len(items))
     
-    def search_notion_page(self, book_title):
+    def search_notion_page(self, book_title, isbn):
         response = self.notion.databases.query(
             database_id = self.database_id,
             filter = {
-                "property": "title",
-                "title": {
-                    "equals": book_title
-                    #"equals": book_title
+                "property": "ISBN",
+                "number": {
+                    "equals": int(isbn)
                 }
             }
         )
