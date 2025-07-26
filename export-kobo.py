@@ -446,9 +446,15 @@ class ExportKobo(CommandLineTool):
             print("Available books:")
             for i, book in enumerate(self.books):
                 print(f"{i}. {book.title} - ISBN: {book.isbn}")
+            print("Will search for the page in Notion with the ISBN." \
+            "If not found, will export to the default page (Please make sure there is a page whose ISBN is 0).")
             choice = int(input("Please input the number: "))
             page_id = self.search_notion_page(self.books[choice].title, self.books[choice].isbn)
+            if page_id is None:
+                print("I will export to the default page (ISBN: 0).")
+                page_id = self.search_notion_page(self.books[choice].title, 0)
             selected_items = [item for item in items if self.books[choice].title in item.title]
+            acc = u"\n".join([(u"%s\n" % i) for i in selected_items])
             self.export_to_notion(page_id, selected_items)
 
         if self.vargs["output"] is not None:

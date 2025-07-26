@@ -21,9 +21,10 @@ Please read [pettarin/export-kobo](https://github.com/pettarin/export-kobo) for 
 
 ```bash
 # Export the highlights to Notion page (prompt to enter which book you want)
+# Default: export to the page whose ISBN is **0**
 python3 ./export-kobo.py --export ./KoboReader.sqlite
 # Randomly select 5 highlights and send the email
-python3 ./export-kobo.py ./KoboReader.sqlite
+python3 ./export-kobo.py ./KoboReader.sqlite --email
 ```
 
 ## Installation
