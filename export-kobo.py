@@ -373,7 +373,8 @@ class ExportKobo(CommandLineTool):
         "content.Title, "
         "content.Attribution "
         "FROM Bookmark INNER JOIN content "
-        "ON Bookmark.VolumeID = content.ContentID;"
+        "ON Bookmark.VolumeID = content.ContentID "
+        "ORDER BY Bookmark.DateCreated;"
     )
 
     # NOTE: not a tuple, just a continuation string!
